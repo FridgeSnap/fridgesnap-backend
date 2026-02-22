@@ -1,0 +1,18 @@
+# env / secrets
+.env
+
+# node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# mac
+.DS_Store
+
+# runtime files
+*.log
+
+# local json storage (optional: keep OUT of GitHub if it contains user data)
+users.json
+scans.json
