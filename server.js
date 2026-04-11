@@ -1,4 +1,3 @@
-// MUST be line 1 — loads .env BEFORE anything else
 import "dotenv/config";
 
 import express from "express";
@@ -11,7 +10,7 @@ import crypto from "crypto";
 const app = express();
 app.use(express.json({ limit: "15mb" }));
 
-app.get("/", (req, res) => {
+app.get("/", (_req, res) => {
   res.send("FridgeSnap backend running.");
 });
 
@@ -36,7 +35,7 @@ function saveUsers() {
 
 function getStartOfWeekMs() {
   const now = new Date();
-  const day = now.getDay(); // 0=Sun
+  const day = now.getDay();
   const start = new Date(now);
   start.setDate(now.getDate() - day);
   start.setHours(0, 0, 0, 0);
@@ -47,35 +46,60 @@ function getNextWeekStartMs(weekStartMs) {
   return weekStartMs + 7 * 24 * 60 * 60 * 1000;
 }
 
-function ensureUser(deviceId) {
+function getIdentityKey({ guestId, deviceId }) {
+  if (guestId && typeof guestId === "string" && guestId.length > 0) {
+    return `guest:${guestId}`;
+  }
+  if (deviceId && typeof deviceId === "string" && deviceId.length > 0) {
+    return `device:${deviceId}`;
+  }
+  return null;
+}
+
+function ensureUser(identityKey, fallbackDeviceKey = null) {
   const weekStart = getStartOfWeekMs();
 
-  if (!users[deviceId]) {
-    users[deviceId] = {
+  if (!users[identityKey] && fallbackDeviceKey && users[fallbackDeviceKey]) {
+    users[identityKey] = { ...users[fallbackDeviceKey] };
+    saveUsers();
+  }
+
+  if (!users[identityKey]) {
+    users[identityKey] = {
       isPremium: false,
       weekStartMs: weekStart,
       freeUsedThisWeek: 0,
       lastAnalyzeMs: 0,
       lastRegenMs: 0,
+      isLockedUntilReset: false,
+      unlockAtMs: 0,
     };
     saveUsers();
   }
 
-  const user = users[deviceId];
+  const user = users[identityKey];
 
-  // normalize older shapes
   if (typeof user.isPremium !== "boolean") user.isPremium = false;
   if (typeof user.weekStartMs !== "number") user.weekStartMs = weekStart;
   if (typeof user.freeUsedThisWeek !== "number") user.freeUsedThisWeek = 0;
   if (typeof user.lastAnalyzeMs !== "number") user.lastAnalyzeMs = 0;
   if (typeof user.lastRegenMs !== "number") user.lastRegenMs = 0;
+  if (typeof user.isLockedUntilReset !== "boolean") user.isLockedUntilReset = false;
+  if (typeof user.unlockAtMs !== "number") user.unlockAtMs = 0;
 
-  // weekly reset
   if (user.weekStartMs !== weekStart) {
     user.weekStartMs = weekStart;
     user.freeUsedThisWeek = 0;
     user.lastAnalyzeMs = 0;
     user.lastRegenMs = 0;
+    user.isLockedUntilReset = false;
+    user.unlockAtMs = 0;
+    saveUsers();
+  }
+
+  if (user.unlockAtMs > 0 && Date.now() >= user.unlockAtMs) {
+    user.isLockedUntilReset = false;
+    user.unlockAtMs = 0;
     saveUsers();
   }
 
@@ -137,9 +161,7 @@ function sanitizeFreeRecipe(text) {
   return recipe;
 }
 
-/* ---------------- JSON SCHEMAS (PLAIN) ----------------
-   Root MUST be { type: "object" } or OpenAI throws errors.
-*/
+/* ---------------- JSON SCHEMAS ---------------- */
 
 const FREE_JSON_SCHEMA = {
   type: "object",
@@ -157,9 +179,7 @@ const PREMIUM_JSON_SCHEMA = {
   additionalProperties: false,
   properties: {
     error: { type: "string", enum: ["NO_FOOD_DETECTED"] },
-
     title: { type: "string" },
-
     ingredients: {
       type: "array",
       items: {
@@ -172,12 +192,9 @@ const PREMIUM_JSON_SCHEMA = {
         required: ["item", "amount"],
       },
     },
-
     steps: { type: "array", items: { type: "string" } },
-
     servings: { type: "string" },
     timeMinutes: { type: "number" },
-
     macros: {
       type: "object",
       additionalProperties: false,
@@ -199,16 +216,34 @@ const DEBUG_SECRET = "abc123";
 
 app.post("/debug/setPremium", (req, res) => {
   const secret = req.headers["x-debug-secret"];
-  if (secret !== DEBUG_SECRET) return res.status(403).json({ error: "Forbidden" });
+  if (secret !== DEBUG_SECRET) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
-  const { deviceId, isPremium } = req.body || {};
-  if (!deviceId || typeof deviceId !== "string") return res.status(400).json({ error: "Missing deviceId" });
+  const { deviceId, guestId, isPremium } = req.body || {};
+  const identityKey = getIdentityKey({ guestId, deviceId });
+  const fallbackDeviceKey =
+    deviceId && typeof deviceId === "string" ? `device:${deviceId}` : null;
 
-  const user = ensureUser(deviceId);
+  if (!identityKey) {
+    return res.status(400).json({ error: "Missing identity" });
+  }
+
+  const user = ensureUser(identityKey, fallbackDeviceKey);
   user.isPremium = isPremium === true;
+
+  if (user.isPremium) {
+    user.isLockedUntilReset = false;
+    user.unlockAtMs = 0;
+  }
+
   saveUsers();
 
-  return res.json({ ok: true, deviceId, isPremium: user.isPremium });
+  return res.json({
+    ok: true,
+    identityKey,
+    isPremium: user.isPremium,
+  });
 });
 
 /* ---------------- RATE LIMIT ---------------- */
@@ -231,15 +266,18 @@ function enforceCooldown({ user, kind, seconds }) {
 /* ---------------- PARSE HELPERS ---------------- */
 
 function getOutputText(resp) {
-  // Responses API returns "output" array; extract concatenated text blocks.
   const blocks = resp?.output || [];
   let text = "";
+
   for (const item of blocks) {
     const content = item?.content || [];
     for (const c of content) {
-      if (c?.type === "output_text" && typeof c?.text === "string") text += c.text;
+      if (c?.type === "output_text" && typeof c?.text === "string") {
+        text += c.text;
+      }
     }
   }
+
   return text.trim();
 }
 
@@ -249,6 +287,7 @@ function safeJsonParse(text) {
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
     .trim();
+
   return JSON.parse(cleaned);
 }
 
@@ -272,6 +311,7 @@ const MEAT_KEYWORDS = [
 
 function hasMeatSignal(scan) {
   const hay = [
+    scan?.correctedIngredientsText || "",
     scan?.extraIngredientsText || "",
     Array.isArray(scan?.nutritionGoals) ? scan.nutritionGoals.join(" ") : "",
   ]
@@ -292,59 +332,65 @@ const CUISINE_STYLES = [
 ];
 
 function pickCuisine(scanId) {
-  if (!scanId) return CUISINE_STYLES[Math.floor(Math.random() * CUISINE_STYLES.length)];
+  if (!scanId) {
+    return CUISINE_STYLES[Math.floor(Math.random() * CUISINE_STYLES.length)];
+  }
+
   const h = crypto.createHash("sha256").update(String(scanId)).digest();
-  const n = h[0]; // 0-255
+  const n = h[0];
   return CUISINE_STYLES[n % CUISINE_STYLES.length];
 }
 
 /* ---------------- OPENAI GENERATION ---------------- */
 
 async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
-  // Stronger “chef brain” — drives tastier results
   const chefBrain = [
     "You are a professional chef and recipe developer.",
     "Assume ingredients may be partially obscured. If packaging is unclear, infer cautiously but prioritize clearly visible food items.",
-    "Write crave-worthy, flavorful recipes (not bland or generic).",
+    "Write crave-worthy, flavorful recipes.",
     "Use proper seasoning and layering: aromatics + spice/seasoning + acid + finishing touch.",
     "Aim for restaurant-level flavor with simple home steps.",
     "Avoid repetitive, basic recipes; make each feel distinct.",
     "If meat or seafood is detected, make it the centerpiece and build around it.",
-    "Add texture contrast when possible (sear/crisp + fresh/creamy).",
+    "Add texture contrast when possible.",
     "Include a sauce, glaze, or finishing drizzle when it fits.",
-    "Be warm and encouraging. Call the user 'Chef' occasionally (not every sentence).",
   ].join("\n");
 
   const cuisine = pickCuisine(scanId);
   const meatSignal = hasMeatSignal(scan);
 
+  const ingredientControlBlock = scan.correctedIngredientsText
+    ? `Corrected Ingredients (STRICT): ${scan.correctedIngredientsText}
+IMPORTANT: Use ONLY these corrected ingredients as the main available ingredients.
+IMPORTANT: Do NOT reintroduce removed ingredients from older scans.`
+    : `Extra Ingredients: ${scan.extraIngredientsText || "none"}`;
+
   const customizationBlock =
     `Meal Type: ${scan.mealType || "any"}\n` +
-    `Extra Ingredients: ${scan.extraIngredientsText || "none"}\n` +
+    `${ingredientControlBlock}\n` +
     `Nutrition Goals: ${(Array.isArray(scan.nutritionGoals) ? scan.nutritionGoals : []).join(", ") || "none"}\n` +
     `Time Limit: ${scan.timeLimit || "any"}\n` +
     `Difficulty: ${scan.difficulty || "any"}\n` +
     `Equipment: ${(Array.isArray(scan.equipment) ? scan.equipment : []).join(", ") || "any"}\n`;
 
   const noFoodRule =
-    'Only return {"error":"NO_FOOD_DETECTED"} if you are VERY confident the image is NOT food-related (e.g., people, rooms, cars, text-only). If the image shows a fridge, pantry, groceries, ingredients, or anything that could be food, DO NOT return NO_FOOD_DETECTED — generate the recipe.\n';
+    'Only return {"error":"NO_FOOD_DETECTED"} if you are VERY confident the image is NOT food-related. If the image shows a fridge, pantry, groceries, ingredients, or anything that could be food, generate a recipe instead.\n';
 
-  // Nudges that *don’t* require us to know ingredients ahead of time
   const flavorRules = [
     `Cuisine direction: ${cuisine}.`,
     "Season assertively (salt + pepper at minimum).",
     "Use at least one aromatic: garlic, onion, scallion, shallot, ginger.",
-    "Use at least one acid: lemon/lime, vinegar, tomato, yogurt, pickled element.",
-    "Finish with one: herbs, toasted crunch, drizzle, cheese, fresh squeeze.",
+    "Use at least one acid: lemon/lime, vinegar, tomato, yogurt, or pickled element.",
+    "Finish with one: herbs, toasted crunch, drizzle, cheese, or fresh squeeze.",
     meatSignal
-      ? "User likely wants more meat: if you detect meat/seafood, center the recipe around it and make it the star."
-      : "If you detect meat/seafood, center the recipe around it and make it the star.",
+      ? "If meat or seafood is detected, center the recipe around it."
+      : "If meat or seafood is detected, center the recipe around it.",
   ].join("\n");
 
   if (!isPremium) {
     const resp = await openai.responses.create({
       model: "gpt-4o-mini-2024-07-18",
-      temperature: 0.35, // slightly higher = less “samey”
+      temperature: 0.35,
       max_output_tokens: 450,
       input: [
         {
@@ -356,15 +402,17 @@ async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
                 `${chefBrain}\n\n` +
                 noFoodRule +
                 `${flavorRules}\n\n` +
-                `Return JSON only with:\n` +
-                `- title: short appetizing name using EXACTLY ONE adjective from: savory, crispy, smoky, creamy, juicy, hearty, zesty, spicy, fresh, golden\n` +
-                `- ingredients: simple ingredient names only (no quantities)\n` +
-                `- recipe: EXACTLY ONE short paragraph. NO numbered steps. NO measurements. NO times. NO temperatures.\n` +
-                `Constraints:\n` +
-                `- Do not use any digits (0-9)\n` +
-                `- Do not use units (cup, tbsp, tsp, oz, g, kg, ml, minutes, degrees)\n` +
-                `- Make it flavorful even without measurements: mention seasonings, aromatics, acid, and a finishing touch.\n\n` +
-                `Preferences:\n${customizationBlock}`,
+                `Return JSON only with:
+- title: short appetizing name using EXACTLY ONE adjective from: savory, crispy, smoky, creamy, juicy, hearty, zesty, spicy, fresh, golden
+- ingredients: simple ingredient names only (no quantities)
+- recipe: EXACTLY ONE short paragraph. NO numbered steps. NO measurements. NO times. NO temperatures.
+
+Constraints:
+- Do not use any digits (0-9)
+- Do not use units (cup, tbsp, tsp, oz, g, kg, ml, minutes, degrees)
+
+Preferences:
+${customizationBlock}`,
             },
             { type: "input_image", file_id: fileId, detail: "low" },
           ],
@@ -382,13 +430,17 @@ async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
 
     const obj = safeJsonParse(getOutputText(resp));
 
-    if (obj?.error === "NO_FOOD_DETECTED") return { kind: "error", error: "NO_FOOD_DETECTED" };
+    if (obj?.error === "NO_FOOD_DETECTED") {
+      return { kind: "error", error: "NO_FOOD_DETECTED" };
+    }
 
     const title = String(obj?.title || "").trim() || "Savory Fridge Find";
     const ingredients = Array.isArray(obj?.ingredients) ? obj.ingredients : [];
     const recipe = sanitizeFreeRecipe(obj?.recipe);
 
-    if (!title || !ingredients.length || !recipe) return { kind: "error", error: "AI_BAD_OUTPUT" };
+    if (!title || !ingredients.length || !recipe) {
+      return { kind: "error", error: "AI_BAD_OUTPUT" };
+    }
 
     return { kind: "free", title, ingredients, recipe };
   }
@@ -407,18 +459,16 @@ async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
               `${chefBrain}\n\n` +
               noFoodRule +
               `${flavorRules}\n\n` +
-              `Return JSON only with:\n` +
-              `- title: short appetizing name using EXACTLY ONE adjective from: savory, crispy, smoky, creamy, juicy, hearty, zesty, spicy, fresh, golden\n` +
-              `- ingredients: list of {item, amount} with measurements\n` +
-              `- steps: clear step-by-step array\n` +
-              `- servings: short string (e.g., "2 servings")\n` +
-              `- timeMinutes: number\n` +
-              `- macros: { calories:number, proteinGrams:number, carbsGrams:number, fatGrams:number }\n\n` +
-              `Quality rules:\n` +
-              `- Do not be bland: use aromatics + seasoning + acid + finishing touch.\n` +
-              `- If meat/seafood is detected, make it the centerpiece and include a good sear/texture step.\n` +
-              `- When possible, include a sauce/glaze (even simple) to elevate flavor.\n\n` +
-              `Preferences:\n${customizationBlock}`,
+              `Return JSON only with:
+- title: short appetizing name using EXACTLY ONE adjective from: savory, crispy, smoky, creamy, juicy, hearty, zesty, spicy, fresh, golden
+- ingredients: list of {item, amount} with measurements
+- steps: clear step-by-step array
+- servings: short string
+- timeMinutes: number
+- macros: { calories:number, proteinGrams:number, carbsGrams:number, fatGrams:number }
+
+Preferences:
+${customizationBlock}`,
           },
           { type: "input_image", file_id: fileId, detail: "low" },
         ],
@@ -436,7 +486,9 @@ async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
 
   const obj = safeJsonParse(getOutputText(resp));
 
-  if (obj?.error === "NO_FOOD_DETECTED") return { kind: "error", error: "NO_FOOD_DETECTED" };
+  if (obj?.error === "NO_FOOD_DETECTED") {
+    return { kind: "error", error: "NO_FOOD_DETECTED" };
+  }
 
   if (
     !obj?.title ||
@@ -462,6 +514,31 @@ async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
 
 /* ---------------- ROUTES ---------------- */
 
+app.post("/status", async (req, res) => {
+  try {
+    const { guestId, deviceId } = req.body || {};
+    const identityKey = getIdentityKey({ guestId, deviceId });
+    const fallbackDeviceKey =
+      deviceId && typeof deviceId === "string" ? `device:${deviceId}` : null;
+
+    if (!identityKey) {
+      return res.status(400).json({ error: "MISSING_IDENTITY" });
+    }
+
+    const user = ensureUser(identityKey, fallbackDeviceKey);
+
+    return res.json({
+      isPremium: !!user.isPremium,
+      isLockedUntilReset: !!user.isLockedUntilReset,
+      unlockAtMs: user.unlockAtMs || 0,
+      freeUsedThisWeek: user.freeUsedThisWeek || 0,
+    });
+  } catch (err) {
+    console.error("STATUS ERROR:", err);
+    return res.status(500).json({ error: "STATUS_FAILED" });
+  }
+});
+
 app.post("/analyze", async (req, res) => {
   let tempPath = null;
 
@@ -470,6 +547,7 @@ app.post("/analyze", async (req, res) => {
 
     const {
       deviceId,
+      guestId,
       imageBase64,
       mealType,
       extraIngredientsText,
@@ -479,26 +557,40 @@ app.post("/analyze", async (req, res) => {
       equipment,
     } = req.body || {};
 
-    if (!deviceId || typeof deviceId !== "string") return res.status(400).json({ error: "Missing deviceId" });
-    if (!imageBase64 || typeof imageBase64 !== "string") return res.status(400).json({ error: "Missing imageBase64" });
+    const identityKey = getIdentityKey({ guestId, deviceId });
+    const fallbackDeviceKey =
+      deviceId && typeof deviceId === "string" ? `device:${deviceId}` : null;
 
-    const user = ensureUser(deviceId);
+    if (!identityKey) {
+      return res.status(400).json({ error: "Missing identity" });
+    }
+
+    if (!imageBase64 || typeof imageBase64 !== "string") {
+      return res.status(400).json({ error: "Missing imageBase64" });
+    }
+
+    const user = ensureUser(identityKey, fallbackDeviceKey);
     const isPremium = user.isPremium === true;
 
-    // cooldown (analyze)
     const ANALYZE_COOLDOWN_SECONDS = 60;
     const cd = enforceCooldown({ user, kind: "analyze", seconds: ANALYZE_COOLDOWN_SECONDS });
     if (!cd.ok) {
       saveUsers();
-      return res.status(429).json({ error: "TOO_MANY_REQUESTS", retryAfterSeconds: cd.retryAfterSeconds });
+      return res.status(429).json({
+        error: "TOO_MANY_REQUESTS",
+        retryAfterSeconds: cd.retryAfterSeconds,
+      });
     }
     saveUsers();
 
-    // free weekly limit (only on analyze)
     const FREE_LIMIT = 4;
     if (!isPremium) {
       if (user.freeUsedThisWeek >= FREE_LIMIT) {
         const unlockAtMs = getNextWeekStartMs(user.weekStartMs);
+        user.isLockedUntilReset = true;
+        user.unlockAtMs = unlockAtMs;
+        saveUsers();
+
         return res.status(403).json({
           error: "FREE_LIMIT_REACHED",
           usedThisWeek: user.freeUsedThisWeek,
@@ -506,18 +598,19 @@ app.post("/analyze", async (req, res) => {
           unlockAtMs,
         });
       }
+
       user.freeUsedThisWeek += 1;
       saveUsers();
     }
 
-    // create scan
     const scanId = crypto.randomUUID();
     scans[scanId] = {
-      deviceId,
+      ownerKey: identityKey,
       createdMs: Date.now(),
       imageBase64,
       mealType: mealType || "any",
       extraIngredientsText: extraIngredientsText || "",
+      correctedIngredientsText: "",
       nutritionGoals: Array.isArray(nutritionGoals) ? nutritionGoals : [],
       timeLimit: timeLimit || "any",
       difficulty: difficulty || "any",
@@ -526,7 +619,6 @@ app.post("/analyze", async (req, res) => {
     };
     saveScans();
 
-    // upload image
     tempPath = writeTempJpeg(imageBase64);
     const fileUpload = await openai.files.create({
       file: fs.createReadStream(tempPath),
@@ -589,8 +681,10 @@ app.post("/regenerate", async (req, res) => {
 
     const {
       deviceId,
+      guestId,
       scanId,
       extraIngredientsText,
+      correctedIngredientsText,
       mealType,
       nutritionGoals,
       timeLimit,
@@ -598,45 +692,76 @@ app.post("/regenerate", async (req, res) => {
       equipment,
     } = req.body || {};
 
-    if (!deviceId || typeof deviceId !== "string") return res.status(400).json({ error: "Missing deviceId" });
-    if (!scanId || typeof scanId !== "string") return res.status(400).json({ error: "Missing scanId" });
+    const identityKey = getIdentityKey({ guestId, deviceId });
+    const fallbackDeviceKey =
+      deviceId && typeof deviceId === "string" ? `device:${deviceId}` : null;
+
+    if (!identityKey) {
+      return res.status(400).json({ error: "Missing identity" });
+    }
+
+    if (!scanId || typeof scanId !== "string") {
+      return res.status(400).json({ error: "Missing scanId" });
+    }
 
     const scan = scans[scanId];
-    if (!scan) return res.status(404).json({ error: "SCAN_NOT_FOUND" });
-    if (scan.deviceId !== deviceId) return res.status(403).json({ error: "SCAN_FORBIDDEN" });
+    if (!scan) {
+      return res.status(404).json({ error: "SCAN_NOT_FOUND" });
+    }
 
-    const user = ensureUser(deviceId);
+    if (scan.ownerKey !== identityKey) {
+      return res.status(403).json({ error: "SCAN_FORBIDDEN" });
+    }
+
+    const user = ensureUser(identityKey, fallbackDeviceKey);
     const isPremium = user.isPremium === true;
 
-    // free: max 1 regen per scan
     if (!isPremium && (scan.regenCount || 0) >= 1) {
       return res.status(403).json({ error: "REGEN_LIMIT_REACHED" });
     }
 
-    // cooldown (regen)
     const REGEN_COOLDOWN_SECONDS = 10;
     const cd = enforceCooldown({ user, kind: "regen", seconds: REGEN_COOLDOWN_SECONDS });
     if (!cd.ok) {
       saveUsers();
-      return res.status(429).json({ error: "TOO_MANY_REQUESTS", retryAfterSeconds: cd.retryAfterSeconds });
+      return res.status(429).json({
+        error: "TOO_MANY_REQUESTS",
+        retryAfterSeconds: cd.retryAfterSeconds,
+      });
     }
     saveUsers();
 
-    // update scan fields if provided
-    if (typeof extraIngredientsText === "string") scan.extraIngredientsText = extraIngredientsText;
-    if (typeof mealType === "string") scan.mealType = mealType;
-    if (Array.isArray(nutritionGoals)) scan.nutritionGoals = nutritionGoals;
-    if (typeof timeLimit === "string") scan.timeLimit = timeLimit;
-    if (typeof difficulty === "string") scan.difficulty = difficulty;
-    if (Array.isArray(equipment)) scan.equipment = equipment;
+    if (typeof extraIngredientsText === "string") {
+      scan.extraIngredientsText = extraIngredientsText;
+    }
+    if (typeof correctedIngredientsText === "string") {
+      scan.correctedIngredientsText = correctedIngredientsText;
+    }
+    if (typeof mealType === "string") {
+      scan.mealType = mealType;
+    }
+    if (Array.isArray(nutritionGoals)) {
+      scan.nutritionGoals = nutritionGoals;
+    }
+    if (typeof timeLimit === "string") {
+      scan.timeLimit = timeLimit;
+    }
+    if (typeof difficulty === "string") {
+      scan.difficulty = difficulty;
+    }
+    if (Array.isArray(equipment)) {
+      scan.equipment = equipment;
+    }
 
     scan.updatedMs = Date.now();
-    if (!isPremium) scan.regenCount = (scan.regenCount || 0) + 1;
+
+    if (!isPremium) {
+      scan.regenCount = (scan.regenCount || 0) + 1;
+    }
 
     scans[scanId] = scan;
     saveScans();
 
-    // re-upload image
     tempPath = writeTempJpeg(scan.imageBase64);
     const fileUpload = await openai.files.create({
       file: fs.createReadStream(tempPath),
@@ -693,40 +818,6 @@ app.post("/regenerate", async (req, res) => {
   }
 });
 
-/* ---------------- START SERVER ---------------- */
-app.post("/status", async (req, res) => {
-  try {
-    const { guestId, deviceId } = req.body || {};
-
-    if (!guestId && !deviceId) {
-      return res.status(400).json({ error: "MISSING_IDENTITY" });
-    }
-
-    const key =
-      typeof guestId === "string" && guestId.length > 0
-        ? guestId
-        : deviceId;
-
-    if (!users[key]) {
-      return res.json({
-        isPremium: false,
-        isLockedUntilReset: false,
-        unlockAtMs: 0
-      });
-    }
-
-    const user = users[key];
-
-    return res.json({
-      isPremium: !!user.isPremium,
-      isLockedUntilReset: !!user.isLockedUntilReset,
-      unlockAtMs: user.unlockAtMs || 0
-    });
-  } catch (err) {
-    console.error("STATUS ERROR:", err);
-    return res.status(500).json({ error: "STATUS_FAILED" });
-  }
-});
 app.listen(3000, "0.0.0.0", () => {
   console.log("Server running on port 3000");
 });
