@@ -694,7 +694,39 @@ app.post("/regenerate", async (req, res) => {
 });
 
 /* ---------------- START SERVER ---------------- */
+app.post("/status", async (req, res) => {
+  try {
+    const { guestId, deviceId } = req.body || {};
 
+    if (!guestId && !deviceId) {
+      return res.status(400).json({ error: "MISSING_IDENTITY" });
+    }
+
+    const key =
+      typeof guestId === "string" && guestId.length > 0
+        ? guestId
+        : deviceId;
+
+    if (!users[key]) {
+      return res.json({
+        isPremium: false,
+        isLockedUntilReset: false,
+        unlockAtMs: 0
+      });
+    }
+
+    const user = users[key];
+
+    return res.json({
+      isPremium: !!user.isPremium,
+      isLockedUntilReset: !!user.isLockedUntilReset,
+      unlockAtMs: user.unlockAtMs || 0
+    });
+  } catch (err) {
+    console.error("STATUS ERROR:", err);
+    return res.status(500).json({ error: "STATUS_FAILED" });
+  }
+});
 app.listen(3000, "0.0.0.0", () => {
   console.log("Server running on port 3000");
 });
