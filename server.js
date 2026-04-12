@@ -163,6 +163,45 @@ function sanitizeFreeRecipe(text) {
 
 /* ---------------- JSON SCHEMAS ---------------- */
 
+const DETECTION_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          category: {
+            type: "string",
+            enum: [
+              "produce",
+              "leftover",
+              "cooked_food",
+              "meat",
+              "seafood",
+              "dairy",
+              "drink",
+              "condiment",
+              "pantry",
+              "sauce",
+              "other_food"
+            ]
+          },
+          confidence: {
+            type: "string",
+            enum: ["high", "medium", "low"]
+          }
+        },
+        required: ["name", "category", "confidence"]
+      }
+    }
+  },
+  required: ["items"]
+};
+
 const FREE_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -291,7 +330,7 @@ function safeJsonParse(text) {
   return JSON.parse(cleaned);
 }
 
-/* ---------------- RECIPE QUALITY HELPERS ---------------- */
+/* ---------------- DETECTION HELPERS ---------------- */
 
 const MEAT_KEYWORDS = [
   "chicken",
@@ -309,11 +348,12 @@ const MEAT_KEYWORDS = [
   "tuna",
 ];
 
-function hasMeatSignal(scan) {
+function hasMeatSignal(scan, detectedItems = []) {
   const hay = [
     scan?.correctedIngredientsText || "",
     scan?.extraIngredientsText || "",
     Array.isArray(scan?.nutritionGoals) ? scan.nutritionGoals.join(" ") : "",
+    detectedItems.map((x) => x.name).join(" "),
   ]
     .join(" ")
     .toLowerCase();
@@ -341,9 +381,45 @@ function pickCuisine(scanId) {
   return CUISINE_STYLES[n % CUISINE_STYLES.length];
 }
 
+async function detectFoodItemsFromImage(fileId) {
+  const resp = await openai.responses.create({
+    model: "gpt-4o-mini-2024-07-18",
+    temperature: 0.1,
+    max_output_tokens: 700,
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text:
+              "Identify all visible food items in this fridge image. Include BOTH raw ingredients and prepared leftovers. " +
+              "If food is inside containers, bowls, jars, covered dishes, or meal prep boxes, treat that as real food. " +
+              "If a container appears to contain cooked spaghetti, pasta, salad, soup, noodles, rice, stir-fry, roasted vegetables, cooked meat, or mixed leftovers, name that prepared food directly. " +
+              "Prefer visible food over packaging text when possible, but packaging can help confirm items like broth, tomato paste, kombucha, sparkling water, tonic water, sauces, or condiments. " +
+              "Return JSON only.",
+          },
+          { type: "input_image", file_id: fileId, detail: "high" },
+        ],
+      },
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "detection",
+        strict: false,
+        schema: DETECTION_JSON_SCHEMA,
+      },
+    },
+  });
+
+  const obj = safeJsonParse(getOutputText(resp));
+  return Array.isArray(obj?.items) ? obj.items : [];
+}
+
 /* ---------------- OPENAI GENERATION ---------------- */
 
-async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
+async function generateRecipeFromScan({ scan, scanId, isPremium, fileId, detectedItems = [] }) {
   const chefBrain = [
     "You are a professional chef and recipe developer.",
     "Assume ingredients may be partially obscured. If packaging is unclear, infer cautiously but prioritize clearly visible food items.",
@@ -356,14 +432,31 @@ async function generateRecipeFromScan({ scan, scanId, isPremium, fileId }) {
     "Include a sauce, glaze, or finishing drizzle when it fits.",
   ].join("\n");
 
+  const visionRules = [
+    "Identify BOTH raw ingredients and prepared leftovers.",
+    "If food is inside containers, bowls, jars, meal prep boxes, or covered dishes, treat that as real food that can be used.",
+    "Look for cooked foods such as pasta, rice, noodles, soups, roasted vegetables, cooked meat, sauces, and mixed leftovers.",
+    "If a container clearly holds prepared food, mention that prepared food directly instead of only guessing raw ingredients.",
+    "Prefer visible food over packaging text when both are present.",
+    "Be conservative but useful: if a prepared leftover strongly looks like spaghetti, pasta, salad, soup, stir-fry, or roasted leftovers, say so.",
+  ].join("\n");
+
   const cuisine = pickCuisine(scanId);
-  const meatSignal = hasMeatSignal(scan);
+  const meatSignal = hasMeatSignal(scan, detectedItems);
 
   const ingredientControlBlock = scan.correctedIngredientsText
-    ? `Corrected Ingredients (STRICT): ${scan.correctedIngredientsText}
-IMPORTANT: Use ONLY these corrected ingredients as the main available ingredients.
-IMPORTANT: Do NOT reintroduce removed ingredients from older scans.`
+    ? `Corrected Ingredients (STRICT OVERRIDE): ${scan.correctedIngredientsText}
+IMPORTANT: Treat this corrected list as the only allowed main ingredients.
+IMPORTANT: Do NOT use removed ingredients, even if they are still visible in the image.
+IMPORTANT: If the image conflicts with this corrected list, trust the corrected list.`
     : `Extra Ingredients: ${scan.extraIngredientsText || "none"}`;
+
+  const detectedItemsBlock = detectedItems.length
+    ? `Detected Food Items:
+${detectedItems
+  .map((x) => `- ${x.name} (${x.category}, ${x.confidence})`)
+  .join("\n")}\n`
+    : "";
 
   const customizationBlock =
     `Meal Type: ${scan.mealType || "any"}\n` +
@@ -374,7 +467,7 @@ IMPORTANT: Do NOT reintroduce removed ingredients from older scans.`
     `Equipment: ${(Array.isArray(scan.equipment) ? scan.equipment : []).join(", ") || "any"}\n`;
 
   const noFoodRule =
-    'Only return {"error":"NO_FOOD_DETECTED"} if you are VERY confident the image is NOT food-related. If the image shows a fridge, pantry, groceries, ingredients, or anything that could be food, generate a recipe instead.\n';
+    'Only return {"error":"NO_FOOD_DETECTED"} if you are VERY confident the image is NOT food-related. If the image shows a fridge, pantry, groceries, ingredients, containers of food, leftovers, or anything that could be food, generate a recipe instead.\n';
 
   const flavorRules = [
     `Cuisine direction: ${cuisine}.`,
@@ -385,13 +478,14 @@ IMPORTANT: Do NOT reintroduce removed ingredients from older scans.`
     meatSignal
       ? "If meat or seafood is detected, center the recipe around it."
       : "If meat or seafood is detected, center the recipe around it.",
+    "If corrected ingredients are provided, never mention or use ingredients outside that corrected list unless they are basic seasonings or cooking staples.",
   ].join("\n");
 
   if (!isPremium) {
     const resp = await openai.responses.create({
       model: "gpt-4o-mini-2024-07-18",
-      temperature: 0.35,
-      max_output_tokens: 450,
+      temperature: 0.45,
+      max_output_tokens: 500,
       input: [
         {
           role: "user",
@@ -400,10 +494,12 @@ IMPORTANT: Do NOT reintroduce removed ingredients from older scans.`
               type: "input_text",
               text:
                 `${chefBrain}\n\n` +
+                `${visionRules}\n\n` +
                 noFoodRule +
+                `${detectedItemsBlock}\n` +
                 `${flavorRules}\n\n` +
                 `Return JSON only with:
-- title: short appetizing name using EXACTLY ONE adjective from: savory, crispy, smoky, creamy, juicy, hearty, zesty, spicy, fresh, golden
+- title: short appetizing recipe name
 - ingredients: simple ingredient names only (no quantities)
 - recipe: EXACTLY ONE short paragraph. NO numbered steps. NO measurements. NO times. NO temperatures.
 
@@ -434,7 +530,7 @@ ${customizationBlock}`,
       return { kind: "error", error: "NO_FOOD_DETECTED" };
     }
 
-    const title = String(obj?.title || "").trim() || "Savory Fridge Find";
+    const title = String(obj?.title || "").trim() || "Fridge Find";
     const ingredients = Array.isArray(obj?.ingredients) ? obj.ingredients : [];
     const recipe = sanitizeFreeRecipe(obj?.recipe);
 
@@ -447,8 +543,8 @@ ${customizationBlock}`,
 
   const resp = await openai.responses.create({
     model: "gpt-4o-mini-2024-07-18",
-    temperature: 0.3,
-    max_output_tokens: 800,
+    temperature: 0.4,
+    max_output_tokens: 900,
     input: [
       {
         role: "user",
@@ -457,15 +553,23 @@ ${customizationBlock}`,
             type: "input_text",
             text:
               `${chefBrain}\n\n` +
+              `${visionRules}\n\n` +
               noFoodRule +
+              `${detectedItemsBlock}\n` +
               `${flavorRules}\n\n` +
               `Return JSON only with:
-- title: short appetizing name using EXACTLY ONE adjective from: savory, crispy, smoky, creamy, juicy, hearty, zesty, spicy, fresh, golden
+- title: short appetizing recipe name
 - ingredients: list of {item, amount} with measurements
 - steps: clear step-by-step array
 - servings: short string
 - timeMinutes: number
 - macros: { calories:number, proteinGrams:number, carbsGrams:number, fatGrams:number }
+
+Quality rules:
+- Do not be bland.
+- If meat or seafood is detected, make it the centerpiece.
+- When possible, include a sauce or glaze.
+- If leftovers are detected, intelligently transform them instead of ignoring them.
 
 Preferences:
 ${customizationBlock}`,
@@ -625,11 +729,14 @@ app.post("/analyze", async (req, res) => {
       purpose: "vision",
     });
 
+    const detectedItems = await detectFoodItemsFromImage(fileUpload.id);
+
     const out = await generateRecipeFromScan({
       scan: scans[scanId],
       scanId,
       isPremium,
       fileId: fileUpload.id,
+      detectedItems,
     });
 
     if (out.kind === "error") {
@@ -647,6 +754,7 @@ app.post("/analyze", async (req, res) => {
         recipe: out.recipe,
         usedThisWeek: user.freeUsedThisWeek,
         limitPerWeek: FREE_LIMIT,
+        detectedItems,
       });
     }
 
@@ -660,6 +768,7 @@ app.post("/analyze", async (req, res) => {
       servings: out.servings,
       timeMinutes: out.timeMinutes,
       macros: out.macros,
+      detectedItems,
     });
   } catch (err) {
     console.error(err);
@@ -768,11 +877,14 @@ app.post("/regenerate", async (req, res) => {
       purpose: "vision",
     });
 
+    const detectedItems = await detectFoodItemsFromImage(fileUpload.id);
+
     const out = await generateRecipeFromScan({
       scan,
       scanId,
       isPremium,
       fileId: fileUpload.id,
+      detectedItems,
     });
 
     if (out.kind === "error") {
@@ -792,6 +904,7 @@ app.post("/regenerate", async (req, res) => {
         recipe: out.recipe,
         usedThisWeek: user.freeUsedThisWeek,
         limitPerWeek: FREE_LIMIT,
+        detectedItems,
       });
     }
 
@@ -805,6 +918,7 @@ app.post("/regenerate", async (req, res) => {
       servings: out.servings,
       timeMinutes: out.timeMinutes,
       macros: out.macros,
+      detectedItems,
     });
   } catch (err) {
     console.error(err);
