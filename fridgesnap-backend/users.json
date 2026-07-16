@@ -1,0 +1,166 @@
+{
+  "A8CE62A3-36AD-4914-928B-3FC1F9478852": {
+    "isPremium": false,
+    "weekStartMs": 1770515561768,
+    "freeUsedThisWeek": 1,
+    "lastScanMs": 1770692083275,
+    "scansToday": 4
+  },
+  "BF922E72-5149-4F50-A0CB-A7B0A7043F33": {
+    "isPremium": true,
+    "weekStartMs": 1770692444504,
+    "freeUsedThisWeek": 1,
+    "dayStartMs": 1770996358263,
+    "scansToday": 1,
+    "lastScanMs": 1770996358263
+  },
+  "CCEC056B-FBF8-43D9-87CB-343FF31656EE": {
+    "isPremium": true,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 0,
+    "dayStartMs": 1771119382357,
+    "scansToday": 3,
+    "lastScanMs": 1771192739463,
+    "dailyDate": "Fri Feb 13 2026",
+    "dailyCount": 1,
+    "lastRequestMs": 1770998662876
+  },
+  "80848A98-F8FB-4C4C-A233-DC0018822000": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 2,
+    "lastRequestMs": 1771205803216
+  },
+  "2EABD9B7-9B83-4EE7-9029-598DF419610B": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 1,
+    "lastRequestMs": 1771212144196
+  },
+  "0E28A0E2-5420-4CFA-B0EB-867DEB6E23D0": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 4,
+    "lastRequestMs": 1771419564670,
+    "lastAnalyzeMs": 1771459450718
+  },
+  "6F40A890-3F91-414F-80D7-37503646B630": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 1,
+    "lastAnalyzeMs": 1771466389755,
+    "lastRegenMs": 1771466479892
+  },
+  "B49191D0-C25B-44B3-A45B-43483D6B5FA8": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771605512852,
+    "lastRegenMs": 1771603089854
+  },
+  "62D7600B-08C9-44A7-8405-76F5B9DC9B55": {
+    "isPremium": true,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771622444224,
+    "lastRegenMs": 1771622208135
+  },
+  "5BF5649D-F72C-409A-816D-75EE98A4EE29": {
+    "isPremium": true,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771642725217,
+    "lastRegenMs": 1771624615327
+  },
+  "D098F153-880D-41F1-B025-B4F03FB35093": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771675981128,
+    "lastRegenMs": 0
+  },
+  "862F4A4D-BED4-4E69-B4B9-CAF1A4982EEC": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771676788355,
+    "lastRegenMs": 0
+  },
+  "8AB39E4A-7805-4E26-94EF-6FE4FFDDFE60": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771677470244,
+    "lastRegenMs": 0
+  },
+  "6676FD2D-4D52-48FD-A30E-89549CE927AA": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771678564083,
+    "lastRegenMs": 0
+  },
+  "9CA218C4-0238-4CAD-A959-64297E4CFB2B": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771680890928,
+    "lastRegenMs": 0
+  },
+  "203CF1BD-6E1E-496E-977B-01BBF3390E3B": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771681483039,
+    "lastRegenMs": 0
+  },
+  "FB1ED598-4E37-4D26-B843-06A3A3869926": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771712681258,
+    "lastRegenMs": 0
+  },
+  "B5382500-A4CE-48EB-8159-D2377A7C0713": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771713329544,
+    "lastRegenMs": 0
+  },
+  "C720392E-DAC6-48FC-8FDC-5A703810F152": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771714748515,
+    "lastRegenMs": 0
+  },
+  "ECB3E111-6683-489E-BB47-2E951E70E6F2": {
+    "isPremium": false,
+    "weekStartMs": 1771131600000,
+    "freeUsedThisWeek": 3,
+    "lastAnalyzeMs": 1771714990095,
+    "lastRegenMs": 0
+  },
+  "A0EC5794-3CA9-47B2-9E5E-FC6C142661FC": {
+    "isPremium": true,
+    "weekStartMs": 1771736400000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771794618231,
+    "lastRegenMs": 1771789574882
+  },
+  "F2CDFB15-F5A0-4D8D-A7A4-E9BFFBB09E5A": {
+    "isPremium": false,
+    "weekStartMs": 1771736400000,
+    "freeUsedThisWeek": 1,
+    "lastAnalyzeMs": 1771794887075,
+    "lastRegenMs": 0
+  },
+  "1266FCC5-609B-4413-B13D-6F78AB4F11DE": {
+    "isPremium": false,
+    "weekStartMs": 1771736400000,
+    "freeUsedThisWeek": 4,
+    "lastAnalyzeMs": 1771801895493,
+    "lastRegenMs": 0
+  }
+}
