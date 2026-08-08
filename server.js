@@ -7,6 +7,30 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 
+/* ---------------- GLOBAL ERROR HANDLERS ---------------- */
+/*
+ * Without these, an unhandled promise rejection or uncaught exception
+ * anywhere in the process (including inside dependencies) will crash
+ * the Node process with no logged error, which is what was causing the
+ * backend to silently die a few minutes after startup.
+ */
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error(
+    "[UNHANDLED REJECTION] Promise:",
+    promise,
+    "Reason:",
+    reason
+  );
+});
+
+process.on("uncaughtException", (err) => {
+  console.error(
+    "[UNCAUGHT EXCEPTION] The process almost crashed but was kept alive:",
+    err
+  );
+});
+
 const app = express();
 
 app.use(express.json({ limit: "15mb" }));
@@ -25,11 +49,28 @@ app.get("/", (_req, res) => {
   res.send("FridgeSnap backend running.");
 });
 
+/* ---------------- HEALTH CHECK ---------------- */
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
 /* ---------------- OPENAI ---------------- */
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let openai;
+
+try {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+} catch (err) {
+  console.error(
+    "[OPENAI INIT ERROR] Failed to initialize OpenAI client:",
+    err
+  );
+
+  openai = null;
+}
 
 /* ---------------- SCANS STORAGE ---------------- */
 
@@ -1006,12 +1047,30 @@ app.post("/status", async (req, res) => {
   }
 });
 
+/* ---------------- EXPRESS ERROR HANDLER ---------------- */
+/*
+ * Catches any error thrown/passed to next() from route handlers or
+ * other middleware so it can be logged instead of crashing the process.
+ */
+
+app.use((err, _req, res, _next) => {
+  console.error("[EXPRESS ERROR HANDLER]", err);
+
+  if (res.headersSent) {
+    return;
+  }
+
+  res.status(500).json({
+    error: "INTERNAL_SERVER_ERROR",
+  });
+});
+
 /* ---------------- SERVER START ---------------- */
 
 const PORT =
   Number(process.env.PORT) || 3000;
 
-app.listen(
+const server = app.listen(
   PORT,
   "0.0.0.0",
   () => {
@@ -1020,3 +1079,26 @@ app.listen(
     );
   }
 );
+
+/* ---------------- GRACEFUL SHUTDOWN ---------------- */
+
+function shutdown(signal) {
+  console.log(
+    `[SHUTDOWN] Received ${signal}. Closing server gracefully...`
+  );
+
+  server.close(() => {
+    console.log("[SHUTDOWN] Server closed. Exiting process.");
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error(
+      "[SHUTDOWN] Forcing shutdown after timeout."
+    );
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
