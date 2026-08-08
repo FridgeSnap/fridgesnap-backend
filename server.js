@@ -7,6 +7,7 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 
+<<<<<<< HEAD
 /* GLOBAL ERROR HANDLERS */
 process.on("unhandledRejection", (reason, promise) => {
   console.error("[UNHANDLED REJECTION]", reason);
@@ -14,6 +15,30 @@ process.on("unhandledRejection", (reason, promise) => {
 
 process.on("uncaughtException", (err) => {
   console.error("[UNCAUGHT EXCEPTION]", err);
+=======
+/* ---------------- GLOBAL ERROR HANDLERS ---------------- */
+/*
+ * Without these, an unhandled promise rejection or uncaught exception
+ * anywhere in the process (including inside dependencies) will crash
+ * the Node process with no logged error, which is what was causing the
+ * backend to silently die a few minutes after startup.
+ */
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error(
+    "[UNHANDLED REJECTION] Promise:",
+    promise,
+    "Reason:",
+    reason
+  );
+});
+
+process.on("uncaughtException", (err) => {
+  console.error(
+    "[UNCAUGHT EXCEPTION] The process almost crashed but was kept alive:",
+    err
+  );
+>>>>>>> main
 });
 
 const app = express();
@@ -31,9 +56,34 @@ app.get("/", (_req, res) => {
   res.send("FridgeSnap backend running.");
 });
 
+<<<<<<< HEAD
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
+=======
+/* ---------------- HEALTH CHECK ---------------- */
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+/* ---------------- OPENAI ---------------- */
+
+let openai;
+
+try {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+} catch (err) {
+  console.error(
+    "[OPENAI INIT ERROR] Failed to initialize OpenAI client:",
+    err
+  );
+
+  openai = null;
+}
+>>>>>>> main
 
 /* OPENAI */
 let openai;
@@ -584,6 +634,7 @@ app.post("/status", async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 /* ERROR HANDLER */
 app.use((err, _req, res, _next) => {
   console.error("[EXPRESS ERROR HANDLER]", err);
@@ -605,6 +656,47 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 /* GRACEFUL SHUTDOWN */
 function shutdown(signal) {
   console.log(`[SHUTDOWN] Received ${signal}. Closing server gracefully...`);
+=======
+/* ---------------- EXPRESS ERROR HANDLER ---------------- */
+/*
+ * Catches any error thrown/passed to next() from route handlers or
+ * other middleware so it can be logged instead of crashing the process.
+ */
+
+app.use((err, _req, res, _next) => {
+  console.error("[EXPRESS ERROR HANDLER]", err);
+
+  if (res.headersSent) {
+    return;
+  }
+
+  res.status(500).json({
+    error: "INTERNAL_SERVER_ERROR",
+  });
+});
+
+/* ---------------- SERVER START ---------------- */
+
+const PORT =
+  Number(process.env.PORT) || 3000;
+
+const server = app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `FridgeSnap backend running on port ${PORT}`
+    );
+  }
+);
+
+/* ---------------- GRACEFUL SHUTDOWN ---------------- */
+
+function shutdown(signal) {
+  console.log(
+    `[SHUTDOWN] Received ${signal}. Closing server gracefully...`
+  );
+>>>>>>> main
 
   server.close(() => {
     console.log("[SHUTDOWN] Server closed. Exiting process.");
@@ -612,11 +704,21 @@ function shutdown(signal) {
   });
 
   setTimeout(() => {
+<<<<<<< HEAD
     console.error("[SHUTDOWN] Forcing shutdown after timeout.");
+=======
+    console.error(
+      "[SHUTDOWN] Forcing shutdown after timeout."
+    );
+>>>>>>> main
     process.exit(1);
   }, 10000).unref();
 }
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+<<<<<<< HEAD
 process.on("SIGINT", () => shutdown("SIGINT"));
 
+=======
+process.on("SIGINT", () => shutdown("SIGINT"));
+>>>>>>> main
