@@ -603,6 +603,13 @@ app.post("/analyze", async (req, res) => {
 
     tempPath =
       writeTempJpeg(imageBase64);
+	
+    fs.copyFileSync(
+      tempPath,
+      path.join(process.cwd(), "debug-image.jpg")
+    );
+
+    console.log("[IMAGE DEBUG] Saved debug-image.jpg");
 
     const imageBuffer = fs.readFileSync(tempPath);
 
