@@ -240,8 +240,8 @@ const RECIPE_JSON_SCHEMA = {
   additionalProperties: false,
   properties: {
     error: {
-      type: "string",
-      enum: ["NO_FOOD_DETECTED"],
+      type: ["string", "null"],
+      enum: ["NO_FOOD_DETECTED", null],
     },
     title: {
       type: "string",
@@ -257,6 +257,7 @@ const RECIPE_JSON_SCHEMA = {
     },
   },
   required: [
+    "error",
     "title",
     "ingredients",
     "recipe",
