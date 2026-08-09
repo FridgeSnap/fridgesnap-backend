@@ -599,6 +599,18 @@ app.post("/analyze", async (req, res) => {
     tempPath =
       writeTempJpeg(imageBase64);
 
+	const imageBuffer = fs.readFileSync(tempPath);
+
+	console.log(
+	  "[IMAGE DEBUG] bytes:",
+	  imageBuffer.length
+	);
+	
+	console.log(
+	  "[IMAGE DEBUG] header:",
+	  imageBuffer.subarray(0, 10).toString("hex")
+	);
+
     console.log(
       "[ANALYZE] Temporary image created."
     );
