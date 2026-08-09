@@ -331,7 +331,10 @@ ${customization}
 
 Rules:
 - If the image clearly contains food, generate a recipe.
-- Only return NO_FOOD_DETECTED if the image is clearly unrelated to food.
+- Assume the image contains food unless it is obviously unrelated to food.
+- If you can identify even one food ingredient, generate a recipe.
+- Groceries, packaged food, produce, meat, dairy, drinks, and cooked food all count as food.
+- Only return NO_FOOD_DETECTED when the image is clearly not food-related.
 - Prioritize ingredients that are visibly present.
 - Respect corrected ingredients when provided.
 - Do not invent major ingredients that are not reasonably available.
@@ -601,17 +604,13 @@ app.post("/analyze", async (req, res) => {
     tempPath =
       writeTempJpeg(imageBase64);
 
-	const imageBuffer = fs.readFileSync(tempPath);
+    const imageBuffer = fs.readFileSync(tempPath);
 
-	console.log(
-	  "[IMAGE DEBUG] bytes:",
-	  imageBuffer.length
-	);
-	
-	console.log(
-	  "[IMAGE DEBUG] header:",
-	  imageBuffer.subarray(0, 10).toString("hex")
-	);
+    console.log("[IMAGE DEBUG] bytes:", imageBuffer.length);
+    console.log(
+      "[IMAGE DEBUG] JPEG header:",
+      imageBuffer.subarray(0, 10).toString("hex")
+    );
 
     console.log(
       "[ANALYZE] Temporary image created."
