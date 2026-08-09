@@ -402,6 +402,8 @@ Return exactly this JSON structure:
 
   const outputText =
     getOutputText(response);
+	
+  console.log("[AI] RAW OUTPUT:", outputText);
 
   console.log(
     "[AI] Output length:",
