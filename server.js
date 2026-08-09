@@ -1067,8 +1067,7 @@ app.use((err, _req, res, _next) => {
 
 /* ---------------- SERVER START ---------------- */
 
-const PORT =
-  Number(process.env.PORT) || 3000;
+const PORT = 3000;
 
 const server = app.listen(
   PORT,
