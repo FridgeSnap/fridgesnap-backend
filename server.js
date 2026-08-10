@@ -368,7 +368,7 @@ Return exactly this JSON structure:
 
   console.log("[AI] Sending image to OpenAI...");
 
-  const response =
+  let response =
     await openai.responses.create({
       model: "gpt-4o-mini-2024-07-18",
       temperature: 0.35,
@@ -435,6 +435,108 @@ Return exactly this JSON structure:
   }
 
   if (
+  result?.error ===
+  "NO_FOOD_DETECTED"
+) {
+  console.log(
+    "[AI] First pass returned NO_FOOD_DETECTED. Performing second visual check..."
+  );
+
+  const retryPrompt = `
+Re-examine the exact same image very carefully.
+
+This is a food-inventory application. The image may show a refrigerator, groceries, packaged food, produce, meat, dairy, drinks, leftovers, or other edible food.
+
+If ANY clearly visible food or edible ingredient is present, you MUST generate a recipe using it.
+
+Do NOT return NO_FOOD_DETECTED merely because:
+- the food is packaged
+- the food is partially obscured
+- the refrigerator is cluttered
+- the image is dark
+- the food is small
+- you are uncertain about the exact brand or variety
+
+Only return NO_FOOD_DETECTED if the image is genuinely unrelated to food and there is no reasonable edible ingredient visible.
+
+Cuisine direction:
+${cuisine}
+
+${customization}
+
+Return exactly this JSON structure:
+{
+  "title": "recipe title",
+  "ingredients": ["ingredient one", "ingredient two"],
+  "recipe": "one concise recipe paragraph"
+}
+`;
+
+  console.log(
+    "[AI] Sending second visual check..."
+  );
+
+  response =
+    await openai.responses.create({
+      model: "gpt-4o-mini-2024-07-18",
+      temperature: 0.2,
+      max_output_tokens: 500,
+
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: retryPrompt,
+            },
+            {
+              type: "input_image",
+              file_id: fileId,
+              detail: "low",
+            },
+          ],
+        },
+      ],
+
+      text: {
+        format: {
+          type: "json_schema",
+          name: "fridgesnap_recipe",
+          strict: true,
+          schema: RECIPE_JSON_SCHEMA,
+        },
+      },
+    });
+
+  const retryOutput =
+    getOutputText(response);
+
+  console.log(
+    "[AI] SECOND RAW OUTPUT:",
+    retryOutput
+  );
+
+  if (!retryOutput) {
+    throw new Error(
+      "OpenAI returned an empty response on second visual check."
+    );
+  }
+
+  try {
+    result = safeJsonParse(retryOutput);
+  } catch (err) {
+    console.error(
+      "[AI] Invalid JSON on second visual check:",
+      retryOutput
+    );
+
+    throw new Error(
+      "OpenAI returned invalid recipe JSON on second visual check."
+    );
+  }
+
+  if (
     result?.error ===
     "NO_FOOD_DETECTED"
   ) {
@@ -443,6 +545,7 @@ Return exactly this JSON structure:
       error: "NO_FOOD_DETECTED",
     };
   }
+}
 
   if (
     !result?.title ||
